@@ -2,6 +2,20 @@
 
 A lightweight, zero-dependency Python CLI to install and update **Antigravity** on Linux (`x86_64`).
 
+## Quick Run (No Install Needed)
+
+Update (or install) Antigravity with a single command without cloning the repo:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kartik2005221/antigravity-update/main/antigravity-update | python3
+```
+
+Pass flags like `--check` or `--force` using `-`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kartik2005221/antigravity-update/main/antigravity-update | python3 - --check
+```
+
 ## Features
 
 - Checks `https://antigravity.google/download` for the latest Linux `x64` release.
