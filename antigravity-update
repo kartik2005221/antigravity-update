@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+import sys
+import os
+import re
+import gzip
+import shutil
+import tarfile
+import tempfile
+import urllib.request
+
+APP_DIR = os.path.expanduser("~/.local/share/antigravity-app")
+VERSION_FILE = os.path.join(APP_DIR, "version.txt")
+DOWNLOAD_PAGE = "https://antigravity.google/download"
+
+def get_installed_version():
+    if os.path.exists(VERSION_FILE):
+        with open(VERSION_FILE, "r") as f:
+            return f.read().strip()
+    return "0.0.0"
+
+def get_latest_info():
+    req = urllib.request.Request(
+        DOWNLOAD_PAGE,
+        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)", "Accept-Encoding": "gzip"}
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = resp.read()
+        try:
+            data = gzip.decompress(data)
+        except Exception:
+            pass
+        html = data.decode("utf-8", errors="ignore")
+    
+    match = re.search(
+        r'(https://storage\.googleapis\.com/antigravity-public/antigravity-hub/([0-9\.\-]+)/linux-x64/Antigravity\.tar\.gz)',
+        html
+    )
+    if not match:
+        raise RuntimeError("Could not find latest Antigravity Linux download URL on " + DOWNLOAD_PAGE)
+    return match.group(2), match.group(1)
+
+def update(force=False):
+    installed = get_installed_version()
+    print("Checking for updates...")
+    latest_version, download_url = get_latest_info()
+
+    if installed == latest_version and not force:
+        print(f"Antigravity is up to date ({installed}).")
+        return 0
+
+    print(f"Updating Antigravity: {installed} -> {latest_version}")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tar_path = os.path.join(tmpdir, "Antigravity.tar.gz")
+        is_tty = sys.stdout.isatty()
+        last_reported = -1
+
+        def progress(block_num, block_size, total_size):
+            nonlocal last_reported
+            if total_size > 0:
+                percent = min(100, int(block_num * block_size * 100 / total_size))
+                if percent != last_reported:
+                    last_reported = percent
+                    if is_tty:
+                        bar_len = 25
+                        filled = int(bar_len * percent / 100)
+                        bar = "=" * filled + "-" * (bar_len - filled)
+                        sys.stdout.write(f"\rDownloading: [{bar}] {percent}%")
+                        sys.stdout.flush()
+
+        if is_tty:
+            sys.stdout.write(f"\rDownloading: [{' ' * 25}] 0%")
+            sys.stdout.flush()
+        else:
+            print("Downloading update...")
+
+        urllib.request.urlretrieve(download_url, tar_path, reporthook=progress)
+        if is_tty:
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
+
+        print("Extracting and applying update...")
+
+        extract_dir = os.path.join(tmpdir, "extracted")
+        os.makedirs(extract_dir, exist_ok=True)
+        with tarfile.open(tar_path, "r:gz") as tar:
+            tar.extractall(extract_dir)
+
+        extracted_root = None
+        for item in os.listdir(extract_dir):
+            candidate = os.path.join(extract_dir, item)
+            if os.path.isdir(candidate) and "antigravity" in item.lower():
+                extracted_root = candidate
+                break
+
+        if not extracted_root:
+            extracted_root = extract_dir
+
+        share_dir = os.path.dirname(APP_DIR)
+        os.makedirs(share_dir, exist_ok=True)
+
+        staged_dir = os.path.join(share_dir, "antigravity-app.new")
+        old_dir = os.path.join(share_dir, "antigravity-app.old")
+
+        if os.path.exists(staged_dir):
+            shutil.rmtree(staged_dir, ignore_errors=True)
+        if os.path.exists(old_dir):
+            shutil.rmtree(old_dir, ignore_errors=True)
+
+        shutil.move(extracted_root, staged_dir)
+
+        with open(os.path.join(staged_dir, "version.txt"), "w") as f:
+            f.write(latest_version + "\n")
+
+        if os.path.exists(APP_DIR):
+            os.rename(APP_DIR, old_dir)
+        os.rename(staged_dir, APP_DIR)
+
+        shutil.rmtree(old_dir, ignore_errors=True)
+
+    print(f"Updated successfully to {latest_version}!")
+    return 0
+
+if __name__ == "__main__":
+    force_update = "--force" in sys.argv
+    if "--check" in sys.argv:
+        curr = get_installed_version()
+        lat, _ = get_latest_info()
+        print(f"Installed: {curr}")
+        print(f"Latest:    {lat}")
+        if curr != lat:
+            print("Update available.")
+            sys.exit(1)
+        else:
+            print("Up to date.")
+            sys.exit(0)
+    sys.exit(update(force=force_update))
